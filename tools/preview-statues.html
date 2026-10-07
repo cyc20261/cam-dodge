@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>statues-preview</title>
+<!-- 必须与线上一致的 importmap：offline 版指向本地 vendor（含 three/addons/ 供 GLTFLoader 用） -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "../vendor/three.module.js",
+    "three/addons/": "../vendor/addons/",
+    "@mediapipe/tasks-vision": "../vendor/vision_bundle.mjs"
+  }
+}
+</script>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#000}canvas{display:block}</style>
+</head>
+<body>
+<script type="module">
+/**
+ * 修罗魔相展台 —— 专门用来肉眼复核外部雕像。
+ *
+ * 两个机位解决两个问题：
+ *   front  实机视角（和玩家看到的完全一致）→ 看雕像有没有挡住跑道
+ *   row    侧后方低机位 → 看两侧排布的疏密、朝向、体量对不对
+ *
+ * 为什么不能复用 preview-props.html：雕像是**异步加载**的，那边的脚本是同步一次性渲染，
+ * 截到的必然是"雕像还没到"的空图。这里显式等到 world.statues.length > 0 才出图。
+ */
+import { World, STATUE_CFG, TREE_CFG } from '../js/scene.js';
+// 3D 鲸鱼娘需要 GLTFLoader：静态加载好挂到 window（scene.js 的测试钩子），
+// 无头 Virtual Time 下 await import() 会悬挂，生产代码不受影响。
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+window.__GLTFLoader = GLTFLoader;
+/* 出图脚本把立牌 PNG 用 data URI 塞进 window.__STATUE_FILES / __TREE_FILES
+   （scene.js 的 TextureLoader 分支支持 data: 前缀）。为什么需要：无头 Chrome 的
+   Virtual Time 与"异步 fetch + 解析"八字不合 —— 真实网络请求常常等不到回调。
+   改成 data URI 后没有网络等待，截图才有立牌可看。加载函数走的是 scene.js
+   真实的 _mountStandeeSet 全流程。 */
+const q0 = new URLSearchParams(location.search);
+const SET = q0.get('set') || 'statue';
+if (SET === 'tree') {
+  if (window.__TREE_FILES) TREE_CFG.files = window.__TREE_FILES;
+  STATUE_CFG.files = [];   // 别让地狱魔像陪跑加载
+  STATUE_CFG.models = null;
+} else if (SET === 'player') {
+  STATUE_CFG.files = [];   // 玩家机位：只看角色，两侧立牌不加载
+  STATUE_CFG.models = null;
+  TREE_CFG.files = [];
+  if (window.__PLAYER_IMG) window.__PLAYER_IMG_READY = true;   // scene.js _buildPlayer 会读这个 data URI
+} else {
+  if (window.__STATUE_FILES) STATUE_CFG.files = window.__STATUE_FILES;
+  // 真 3D 注入：__STATUE_GLB = {名字: dataURI}（atob→parse 零网络等待）。
+  // 有注入就用 data URI 走真实 _loadModelTpl；没有注入（生产页面）保持 cfg 默认相对路径。
+  if (window.__STATUE_GLB) STATUE_CFG.models = { dir: '', files: Object.values(window.__STATUE_GLB) };
+  TREE_CFG.files = [];
+  TREE_CFG.models = null;
+}
+
+const q = new URLSearchParams(location.search);
+const view = q.get('view') || 'front';
+
+const CAPTURE = { w: 1280, h: 720 };
+const log = (s) => {
+  let d = document.getElementById('diag');
+  if (!d) { d = document.createElement('div'); d.id = 'diag'; document.body.appendChild(d); }
+  d.setAttribute('data-step', String(d.getAttribute('data-step') || '') + s + ' | ');
+};
+const world = new World(document.body).init(SET === 'statue' ? 'hell' : 'sakura');
+log('init');
+const fitCanvas = () => {
+  world.renderer.setPixelRatio(1);
+  world.renderer.setSize(CAPTURE.w, CAPTURE.h, true);
+  world.camera.aspect = CAPTURE.w / CAPTURE.h;
+  world.camera.updateProjectionMatrix();
+};
+
+const st = {
+  laneF: 1, lane: 1, jumpY: 0, duck: false,
+  speed: 22, running: true, distance: 0, demons: [], punchT: -1,
+};
+
+// 本展台看的是哪套立牌（statue=hell / tree=sakura）
+const SET_CFG = SET === 'tree' ? TREE_CFG : STATUE_CFG;
+const SET_LIST = SET === 'tree' ? world.trees : world.statues;
+
+(async () => {
+  // 直接 await 挂载流程本身，别用轮询：
+  // Virtual Time 下 setTimeout 会瞬间到点，轮询会在网络请求完成前就耗尽次数。
+  if (SET === 'player') {
+    // 玩家机位：立牌贴图是 data URI，异步解码 —— 帧循环等它就位。
+    // 关键：每帧必须 await 让出事件循环（setTimeout 0），否则 img 的 onload
+    // 永远没机会派发，600 帧同步跑完立牌还是 invisible。等待计数用 for，
+    // 禁用 Date.now()：虚拟时钟不前进会死循环。
+    // view=duck/jump 时把状态定住，专门复核蹲/跳姿态换图。
+    st.duck = view === 'duck';
+    if (view === 'jump') st.jumpY = 0.6;
+    let ok = false;
+    for (let i = 0; i < 600 && !ok; i++) {
+      world.update(0.033, st);
+      ok = world._player3DOn || (world._playerStandee && world._playerStandee.visible);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    log('standee:' + ok + ',p3d:' + world._player3DOn + ',pose:' + world._playerPoseName);
+    fitCanvas();
+    world.camera.position.set(0, 2.6, 4.6);
+    world.camera.lookAt(0, 1.15, 0);
+    world.camera.updateMatrixWorld(true);
+    world.renderer.render(world.scene, world.camera);
+    window.__ready = true;
+    document.title = `standees-player-ready-${ok ? 1 : 0}`;
+    return;
+  }
+  log('before-mount:' + SET_LIST.length);
+  await (SET === 'tree' ? world._mountTrees() : world._mountStatues());
+  const n = SET_LIST.length;
+  log('after-mount:' + n);
+
+  // 跑若干帧让立牌滚到近处 —— 实机里它们是迎面来、从身边掠过的
+  for (let i = 0; i < 30; i++) world.update(0.033, st);
+
+  fitCanvas();
+  if (view !== 'with-player') world.player.visible = false;   // 别让角色挡住视线（这展台只看立牌）
+  if (view === 'row') {
+    world.camera.position.set(13.5, 3.0, -6);
+    world.camera.lookAt(-1.5, 2.2, -46);
+  } else if (view === 'close') {
+    // 特写机位：贴近左侧第二尊（z≈-21）看贴图与尺寸是否正确
+    world.camera.position.set(-2.5, 3.6, -12);
+    world.camera.lookAt(-7.0, 3.6, -21);
+  } else {
+    // 与实机完全一致的第三人称机位（World.init 里的默认值）
+    world.camera.position.set(0, 3.4, 8);
+    world.camera.lookAt(0, 1.4, -10);
+  }
+  world.camera.updateMatrixWorld(true);
+  world.renderer.render(world.scene, world.camera);
+
+  window.__ready = true;
+  // 深度诊断：渲染统计 + 第一尊立牌的材质/贴图状态 + 每尊投影
+  const sp0 = SET_LIST[0] && SET_LIST[0].children[0];
+  const info = world.renderer.info.render;
+  const m0 = sp0 ? sp0.material : null;
+  const t0 = m0 && m0.map;
+  const dd = [
+    'calls=' + info.calls, 'tris=' + info.triangles,
+    'map=' + (t0 ? (t0.image ? t0.image.width + 'x' + t0.image.height : 'noimg') : 'null'),
+    'mat=' + (m0 ? (m0.transparent ? 'tr' : 'op') + ',fog=' + m0.fog : 'null'),
+  ].join(' ');
+  const diag = SET_LIST.map((s) => {
+    const wp = s.position;
+    const v = wp.clone().project(world.camera);
+    return `(${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)})=>ndc(${v.x.toFixed(2)},${v.y.toFixed(2)})`;
+  });
+  document.title = `standees-${SET}-${view}-ready-${n}|${dd}|${diag.join(' ')}`;
+})();
+</script>
+</body>
+</html>

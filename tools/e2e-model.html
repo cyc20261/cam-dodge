@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>model-e2e</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three.module.js",
+    "@mediapipe/tasks-vision": "/vendor/vision_bundle.mjs"
+  }
+}
+</script>
+<script>
+  window.CAMRUN_CONFIG = { mode: 'local', wasmBase: '/vendor/', modelUrl: '/vendor/pose_landmarker_lite.task' };
+</script>
+</head>
+<body>
+<script type="module">
+  // 端到端验证：不碰摄像头，只验证本地 wasm + 模型能否加载、能否出一次推理结果
+  const set = (t) => { document.title = t; document.body.textContent = t; };
+  try {
+    set('step1: importing pose.js');
+    const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
+    set('step2: fileset');
+    const fileset = await FilesetResolver.forVisionTasks(window.CAMRUN_CONFIG.wasmBase);
+    set('step3: creating landmarker (GPU)');
+    let delegate = 'GPU';
+    let landmarker;
+    const common = {
+      runningMode: 'VIDEO', numPoses: 1,
+      minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+      outputSegmentationMasks: false,
+    };
+    try {
+      landmarker = await PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: window.CAMRUN_CONFIG.modelUrl, delegate: 'GPU' }, ...common });
+    } catch (e) {
+      set('step3b: GPU failed -> CPU');
+      landmarker = await PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: window.CAMRUN_CONFIG.modelUrl, delegate: 'CPU' }, ...common });
+      delegate = 'CPU';
+    }
+    set('step4: landmarker ready (' + delegate + '), warm-up');
+    // 用一张纯色画布做一次假推理，确认 detect 路径不抛异常
+    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+    const ctx = cv.getContext('2d'); ctx.fillStyle = '#333'; ctx.fillRect(0, 0, 256, 256);
+    const bmp = await createImageBitmap(cv);
+    const t0 = performance.now();
+    const res = landmarker.detect(bmp);
+    const ms = (performance.now() - t0).toFixed(0);
+    set('OK delegate=' + delegate + ' detect=' + ms + 'ms poses=' + (res.landmarks ? res.landmarks.length : 0));
+    landmarker.close();
+  } catch (e) {
+    set('FAIL: ' + (e && e.message || e));
+    console.error(e);
+  }
+</script>
+</body>
+</html>

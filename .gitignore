@@ -1,0 +1,27 @@
+# ---- 运行时/截图临时产物 ----
+# 截图脚本用的 Chrome profile 与内联展台页（几 MB~几十 MB，每次跑都重建）
+tools/.*profile*/
+tools/.uiprof
+tools/.shot-*
+tools/.*inline.html
+tools/.probe-key.json
+tools/*.log
+
+# 图生3D / 图生图的中间产物（原始大图与白底 JPG，代码只用抠好的符号名版本）
+assets/models/**/*-white.jpg
+assets/models/**/*_20*.png
+
+# ---- 系统与编辑器 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+*.log
+npm-debug.log*

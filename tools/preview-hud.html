@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>hud-ready</title>
+<!-- 关键：引的是线上那份 style.css —— 展台只负责排版，心的观感必须和游戏里一模一样，
+     否则"截图好看、实机难看"就没有意义了。 -->
+<link rel="stylesheet" href="../css/style.css">
+<!-- heartMarkup 在 js/ui.js 里，而 ui.js 顶层会 import three（scene.js 链上来的）——
+     没有这张映射表模块链第一步就会挂，页面只剩静态框架（踩过：截图出来全是空的）。 -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "../vendor/three.module.js",
+    "@mediapipe/tasks-vision": "../vendor/vision_bundle.mjs"
+  }
+}
+</script>
+<style>
+  /* 只给展台用的底色与排版 */
+  body {
+    margin: 0; padding: 34px 40px; background: #0e1020; color: #e8ecff;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 { font-size: 17px; font-weight: 800; letter-spacing: 2px; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: #8b96bd; letter-spacing: 1px; margin-bottom: 22px; }
+  .row { display: flex; align-items: center; gap: 22px; margin: 0 0 14px; }
+  .cap { width: 300px; font-size: 12px; color: #8b96bd; letter-spacing: 1px; flex: 0 0 auto; }
+  .cap b { color: #ffd45e; font-weight: 700; }
+  /* 覆盖 HUD 里的"右对齐 + 限宽"（那是压在右上角用的），展台要左对齐、不换行挤压 */
+  .v .lives { max-width: none; justify-content: flex-start; font-size: 30px; gap: 3px; }
+  .sep { height: 1px; background: #232744; margin: 22px 0; }
+  .note { font-size: 12px; color: #6f7aa0; line-height: 1.9; }
+  code { color: #9fd0ff; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>血量刻度 · 每 9 点血熔成 1 颗金心</h1>
+  <div class="sub">红心 = 零头（1 点/颗） · 金心 = 每 9 点一颗 · 空位 = 已失去的血</div>
+
+  <div id="rows"></div>
+
+  <div class="sep"></div>
+  <div class="note">
+    判定口径与 HUD 完全同源：心形 HTML 由 <code>js/ui.js</code> 的 <code>heartMarkup()</code> 生成，
+    样式来自线上 <code>css/style.css</code>。金心多到画不下（&gt;6 颗）时自动退回 <code>N/M</code> 计数。
+  </div>
+
+<script type="module">
+import { heartMarkup, GOLD_HEART } from '../js/ui.js';
+
+// 每行：当前血量 / 上限 / 说明
+const CASES = [
+  [9, 9, '满血 9 点 —— 第一颗金心刚好熔成'],
+  [5, 9, '半血 5 点 —— 金心灭着，红心亮 5 颗'],
+  [0, 9, '血掉光 —— 空位仍在（看得出上限是多少）'],
+  [13, 13, '13 点 = 1 金 + 4 红（零头走红心）'],
+  [10, 13, '10/13 —— 金心亮着，只掉了 3 点零头'],
+  [27, 27, '27 点 = 3 颗金心（跑满 3 段的成长反馈）'],
+  [54, 54, '54 点 = 6 颗金心（逐颗画的上限）'],
+  [63, 63, '63 点 = 7 颗金心 → 自动改用「N/M」计数'],
+];
+
+const rows = document.getElementById('rows');
+for (const [lives, total, desc] of CASES) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const cap = document.createElement('div');
+  cap.className = 'cap';
+  cap.innerHTML = desc.replace(/(\d+)\s*\/\s*(\d+)/, '<b>$1/$2</b>').replace(/^(\d+) 点/, '<b>$1</b> 点');
+  const v = document.createElement('div');
+  v.className = 'v';
+  const lives_ = document.createElement('div');
+  lives_.className = 'lives';
+  lives_.innerHTML = heartMarkup(lives, total);
+  lives_.title = `${lives} / ${total} 点血量`;
+  v.appendChild(lives_);
+  row.appendChild(cap);
+  row.appendChild(v);
+  rows.appendChild(row);
+}
+document.title = 'hud-ready';
+</script>
+</body>
+</html>

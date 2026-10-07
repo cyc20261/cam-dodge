@@ -1,0 +1,634 @@
+/* Cam-Dodge UI —— 樱粉二次元浪漫主题
+ *
+ * 设计约束（和之前的霓虹版一样，这三条不能破）：
+ *   1. HUD 是压在 3D 场景之上的 —— 场景会从樱花粉切到地狱熔岩，
+ *      所以面板一律走"深色玫瑰玻璃 + 半透明模糊"，任何背景下都读得清；
+ *      粉色只做点缀与发光，绝不做大面积浅色底（否则地狱图瞬间瞎）。
+ *   2. 所有 id / 状态类都由 js/ui.js 与 js/main.js 驱动，改样式不能改契约。
+ *   3. 现场要投屏/录像，字号与对比度按"最后一排也看得清"来定。
+ */
+
+:root {
+  /* —— 樱粉主色 —— */
+  --sakura: #ffb3d2;
+  --rose: #ff7eb3;
+  --rose-deep: #f0528f;
+  --blossom: #ffe3ef;
+  --gold: #ffd98a;
+  --gold-deep: #e5a94f;
+  --violet: #9b6bff;
+  --cyan: #6fe6ff;
+
+  /* —— 深色底（玻璃）—— */
+  --plum: #2a1030;
+  --plum-2: #1a0a20;
+  --glass: rgba(45, 18, 52, 0.62);
+  --glass-strong: rgba(38, 14, 46, 0.86);
+  --line: rgba(255, 179, 210, 0.28);
+  --line-soft: rgba(255, 179, 210, 0.16);
+
+  --fg: #fff3f8;
+  --dim: #d9aecd;
+  --red: #ef476f;
+  --green: #4ce0b3;
+  --orange: #ffab5e;
+
+  --r-lg: 22px;
+  --r-md: 14px;
+  --r-sm: 10px;
+  --shadow-lg: 0 30px 80px rgba(24, 4, 30, 0.55);
+  --glow-pink: 0 0 24px rgba(255, 126, 179, 0.45);
+  --glow-gold: 0 0 22px rgba(255, 217, 138, 0.5);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  height: 100%; overflow: hidden;
+  background: var(--plum-2); color: var(--fg);
+  font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  -webkit-user-select: none; user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { position: fixed; inset: 0; }
+#stage { position: absolute; inset: 0; }
+#stage canvas { display: block; }
+
+/* 通用：荧光描边分隔 / 标签 */
+.eyebrow {
+  font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--sakura); opacity: .85;
+}
+
+/* ============================================================
+   HUD —— 顶部作战信息条
+   每个数值都装在独立的玻璃小格里：跑图背景千变万化，
+   裸文字压在画面上一定会在某一张图里丢失可读性。
+   ============================================================ */
+#hud {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px;
+  padding: 16px 20px; pointer-events: none;
+}
+
+.hud-left { display: flex; gap: 10px; flex-wrap: wrap; }
+.hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+
+.metric {
+  display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1;
+  padding: 8px 14px 9px; border-radius: var(--r-md);
+  /* 不用 backdrop-filter：无头/软件渲染下全屏模糊会把帧率拖垮（实测 3fps，
+     连标定的超时兜底都被饿死）。对比度靠提高底色不透明度来保。 */
+  background: rgba(40, 15, 48, .78);
+  border: 1px solid var(--line-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07);
+}
+.metric b {
+  font-size: 27px; font-weight: 800; letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 0 16px rgba(255, 179, 210, .55);
+}
+.metric span {
+  font-size: 10px; color: var(--dim); letter-spacing: 2.5px; margin-top: 4px;
+}
+/* 距离：暖金，和"分数/等级"在颜色上分区 */
+.metric.dist b { color: var(--gold); text-shadow: 0 0 16px rgba(255, 217, 138, .5); }
+.metric.lvlm b { color: var(--sakura); text-shadow: var(--glow-pink); }
+.metric.combo b { color: var(--blossom); }
+#combo.hot { color: var(--gold); text-shadow: var(--glow-gold); }
+
+/* 血量：红心 1 点 / 颗；攒满 9 点熔成 1 颗金心（换算见 ui.js 的 heartMarkup）。
+   用 flex + wrap：等级不设上限，心会一直增多，要能自动换行。 */
+.lives {
+  font-size: 21px;
+  display: flex; flex-wrap: wrap; justify-content: flex-end;
+  gap: 3px; line-height: 1; max-width: 300px;
+  padding: 7px 12px; border-radius: var(--r-md);
+  background: rgba(40, 15, 48, .78);
+  border: 1px solid var(--line-soft);
+}
+/* 心形是内联 SVG（不能用字符 ♥ —— Windows 上会被 Segoe UI Emoji 彩色字形接管，
+   渐变和 color 全部失效，金心永远显示成 emoji 红）。 */
+.lives svg { width: 1em; height: 0.92em; display: block; overflow: visible; }
+.lives .on {
+  color: var(--red);
+  filter: drop-shadow(0 0 6px rgba(239, 71, 111, .7));
+}
+.lives .off { color: rgba(217, 174, 205, .22); }
+.lives .gold.on {
+  filter: drop-shadow(0 0 5px rgba(255, 217, 138, .7))
+          drop-shadow(0 1px 0 rgba(96, 58, 0, .5));
+}
+.lives .gold.off { filter: none; }
+.lives .xcount {
+  font-size: 16px; letter-spacing: 1px; align-self: center;
+  background: linear-gradient(180deg, #fffbe8 0%, #ffcf3f 60%, #d99b16 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: #ffcf3f;
+  filter: drop-shadow(0 0 5px rgba(255, 208, 92, .6));
+}
+.lives .xcount i { font-style: normal; font-size: 12px; color: var(--dim); -webkit-text-fill-color: var(--dim); }
+
+/* 该挥拳了：先在"还有 0.45 秒进窗口"时弱亮「来了！」，
+   真进窗口再换成强亮的「挥拳！」（两档的由来见 game.js 的 demonApproaching）。 */
+.punch-hint {
+  font-size: 15px; font-weight: 800; letter-spacing: 3px;
+  padding: 6px 14px; border-radius: 999px;
+  color: #4a1428; background: linear-gradient(92deg, var(--gold), var(--rose));
+  opacity: 0; transform: scale(.9);
+  box-shadow: 0 0 24px rgba(255, 126, 179, .55);
+  transition: opacity .12s ease; pointer-events: none;
+}
+.punch-hint.show { opacity: 1; animation: punchPulse .48s ease-in-out infinite alternate; }
+.punch-hint.soon {
+  opacity: .72;
+  color: #eafaff; background: rgba(111, 230, 255, .16);
+  border: 1px solid rgba(111, 230, 255, .35);
+  box-shadow: 0 0 18px rgba(111, 230, 255, .35);
+  letter-spacing: 2px;
+}
+@keyframes punchPulse {
+  from { transform: scale(.95); }
+  to   { transform: scale(1.06); }
+}
+
+.row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.pill {
+  font-size: 12px; padding: 5px 11px; border-radius: 999px;
+  background: rgba(40, 15, 48, .78); border: 1px solid var(--line);
+  color: var(--fg); white-space: nowrap;
+}
+.pill.ok { background: rgba(76, 224, 179, .16); border-color: rgba(76, 224, 179, .45); color: var(--green); }
+.pill.warn { background: rgba(255, 171, 94, .16); border-color: rgba(255, 171, 94, .45); color: var(--orange); }
+.pill.kb { background: rgba(217, 174, 205, .12); border-color: rgba(217, 174, 205, .32); color: var(--dim); }
+.pill.ghost { background: rgba(45, 18, 52, .42); }
+#fps.good, #ai-ms.good { color: var(--green); }
+#fps.warn, #ai-ms.warn { color: var(--orange); }
+#fps.bad, #ai-ms.bad { color: var(--red); }
+
+.gesture {
+  font-size: 13px; color: var(--sakura); letter-spacing: 1.5px;
+  min-height: 18px; text-shadow: 0 0 14px rgba(255, 179, 210, .55);
+}
+
+/* ============================================================
+   摄像头面板
+   ============================================================ */
+#cam-panel {
+  position: absolute; left: 20px; bottom: 20px; width: 272px;
+  background: rgba(36, 13, 44, .92); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, .06);
+  overflow: hidden; display: none;
+}
+#cam-panel.show { display: block; animation: cardIn .26s ease-out; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+.cam-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 9px 13px; font-size: 12px; color: var(--sakura);
+  border-bottom: 1px solid var(--line-soft);
+  letter-spacing: 1px;
+}
+.cam-wrap { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #150517; }
+#video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+#video { object-fit: cover; transform: scaleX(-1); }  /* 镜像，符合照镜子直觉 */
+#overlay { transform: scaleX(-1); }
+.cam-foot { padding: 7px 13px; font-size: 11px; color: var(--dim); }
+
+button.mini {
+  background: rgba(255, 126, 179, .16); border: 1px solid var(--line);
+  color: var(--fg); border-radius: 8px; font-size: 11px; padding: 3px 9px; cursor: pointer;
+  transition: background .15s, transform .12s;
+}
+button.mini:hover { background: rgba(255, 126, 179, .28); transform: translateY(-1px); }
+
+#debug {
+  display: none; padding: 9px 13px; font-size: 11px; line-height: 1.65;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  border-top: 1px solid var(--line-soft); color: var(--dim);
+  max-height: 190px; overflow: auto;
+}
+#debug.show { display: block; }
+#debug div { display: flex; justify-content: space-between; gap: 10px; }
+#debug i { font-style: normal; opacity: .7; }
+#debug b { color: var(--cyan); font-weight: 600; }
+
+/* ============================================================
+   全屏面板（开始 / 标定 / 结算）
+   ============================================================ */
+/* 居中用子元素的 margin:auto 而不是 align-items:center ——
+   flex 居中在\"内容高过容器\"时会把顶部裁掉，而且**滚不上去**（经典 flex overflow 陷阱）。
+   margin:auto 既能居中，又能在放不下时自动退化为顶对齐 + 可滚动，内容永远看得到。 */
+.screen {
+  position: absolute; inset: 0; display: none;
+  align-items: flex-start; justify-content: center;
+  padding: 24px; overflow: auto;
+  background:
+    radial-gradient(circle at 50% 34%, rgba(255, 126, 179, .18), transparent 62%),
+    radial-gradient(circle at 78% 78%, rgba(155, 107, 255, .16), transparent 55%),
+    linear-gradient(180deg, rgba(30, 8, 36, .86), rgba(16, 4, 22, .95));
+}
+.screen > * { margin: auto; flex: 0 0 auto; }   /* 居中且不压缩，超高时自动顶对齐可滚动 */
+.screen.show { display: flex; animation: screenIn .26s ease-out; }
+@keyframes screenIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* 飘落的樱花瓣：只在全屏面板可见时才存在 ——
+   游戏进行中 .screen 是 display:none，动画不会消耗任何帧。 */
+.petals { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.petals i {
+  position: absolute; top: -6vh; width: 12px; height: 12px; opacity: 0;
+  /* 不加 box-shadow：软件渲染下每片一层阴影 ×12 片常驻动画，会持续吃合成预算 */
+  background: radial-gradient(circle at 30% 30%, #fff0f6, var(--sakura) 62%, rgba(255, 126, 179, .2));
+  border-radius: 100% 0 100% 0;
+  animation: petalFall linear infinite;
+}
+@keyframes petalFall {
+  0%   { transform: translate3d(0, -8vh, 0) rotate(0deg); opacity: 0; }
+  8%   { opacity: .85; }
+  100% { transform: translate3d(6vw, 112vh, 0) rotate(420deg); opacity: 0; }
+}
+.petals i:nth-child(1)  { left: 6%;  animation-duration: 13s; animation-delay: 0s;    transform: scale(.8); }
+.petals i:nth-child(2)  { left: 14%; animation-duration: 17s; animation-delay: 2.4s;  transform: scale(1.1); }
+.petals i:nth-child(3)  { left: 23%; animation-duration: 15s; animation-delay: 5.1s;  transform: scale(.65); }
+.petals i:nth-child(4)  { left: 32%; animation-duration: 19s; animation-delay: 1.2s;  transform: scale(.95); }
+.petals i:nth-child(5)  { left: 44%; animation-duration: 14s; animation-delay: 7.4s;  transform: scale(.75); }
+.petals i:nth-child(6)  { left: 55%; animation-duration: 18s; animation-delay: 3.3s;  transform: scale(1.05); }
+.petals i:nth-child(7)  { left: 64%; animation-duration: 16s; animation-delay: 6.2s;  transform: scale(.7); }
+.petals i:nth-child(8)  { left: 73%; animation-duration: 20s; animation-delay: .6s;   transform: scale(1); }
+.petals i:nth-child(9)  { left: 82%; animation-duration: 15s; animation-delay: 8.8s;  transform: scale(.85); }
+.petals i:nth-child(10) { left: 90%; animation-duration: 18s; animation-delay: 4.5s;  transform: scale(.6); }
+.petals i:nth-child(11) { left: 96%; animation-duration: 21s; animation-delay: 9.6s;  transform: scale(.9); }
+.petals i:nth-child(12) { left: 38%; animation-duration: 22s; animation-delay: 11s;   transform: scale(.55); }
+@media (prefers-reduced-motion: reduce) { .petals { display: none; } }
+
+.panel {
+  position: relative;
+  width: min(700px, 94vw); padding: 30px 34px 26px;
+  background: linear-gradient(158deg, rgba(64, 20, 66, .92), rgba(28, 9, 36, .95));
+  border: 1px solid var(--line); border-radius: 26px;
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, .07);
+  animation: panelIn .32s cubic-bezier(.2, .9, .3, 1.1);
+}
+@keyframes panelIn { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: none; } }
+/* 顶部一道粉→金的高光，把"浪漫感"做在最不影响可读性的位置 */
+.panel::before {
+  content: ''; position: absolute; left: 8%; right: 8%; top: -1px; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--sakura) 22%, var(--gold) 50%, var(--rose) 78%, transparent);
+  border-radius: 2px; opacity: .85;
+}
+.panel.slim { width: min(430px, 92vw); text-align: center; }
+
+/* ---------- 开始屏双栏布局 ----------
+   左栏品牌 + 入口按钮，右栏玩法卡 + 地图/难度选择 —— 一屏放下不滚动，
+   1080p 投影时左右信息分区清楚，比"一根长条从头滚到尾"更像游戏主界面。 */
+.panel.start-split {
+  width: min(1060px, 95vw);
+  display: grid;
+  grid-template-columns: 1.06fr auto 1fr;
+  gap: 0 34px;
+  align-items: stretch;
+  padding: 34px 38px 30px;
+}
+.start-left { display: flex; flex-direction: column; min-width: 0; }
+.start-left .brand { text-align: left; margin-bottom: 18px; }
+.start-left h1 { font-size: 56px; margin: 14px 0 8px; }
+/* 中文主标题：字号比英文小、字距收紧，否则 7 个汉字在 56px 下会顶满左栏 */
+.start-left h1.zh {
+  font-size: 46px; letter-spacing: 3px; line-height: 1.24; margin: 14px 0 10px;
+}
+h1.zh { font-size: 46px; letter-spacing: 3px; line-height: 1.24; }
+h1.zh em { font-style: normal; }
+.start-left .lead { line-height: 1.7; }
+.start-btns { margin-top: auto; padding-top: 18px; }   /* 按钮压到底部对齐右栏 */
+.start-divider {
+  width: 1px; border-radius: 1px;
+  background: linear-gradient(180deg, transparent, var(--line) 18%, var(--line) 82%, transparent);
+}
+.start-right { display: flex; flex-direction: column; min-width: 0; }
+.start-right .rules { margin-bottom: 10px; }
+.start-right .rules-note { margin: 0 0 14px; text-align: left; }
+.start-right .theme-picker { margin-bottom: 14px; }
+.start-right .mode-picker { margin-bottom: 0; }
+/* 窄屏回退单栏：顺序=品牌→按钮→玩法→配置
+   注意矮屏（高度不足）**不**折单栏 —— 高度不够时更该利用横向空间，双栏反而更矮；见下方 700px 档。 */
+@media (max-width: 900px) {
+  .panel.start-split { grid-template-columns: 1fr; gap: 18px 0; padding: 28px 26px 24px; }
+  .start-divider { width: auto; height: 1px; }
+  .start-left .brand { text-align: center; }
+  .start-left h1 { font-size: 40px; }
+  .start-left h1.zh { font-size: 34px; letter-spacing: 2px; }
+  .start-left .lead br { display: none; }
+  .start-btns { margin-top: 0; }
+  .start-right .rules-note { text-align: center; }
+}
+
+/* 品牌区 */
+.brand { text-align: center; margin-bottom: 22px; }
+.brand-kicker {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: 4px; color: var(--sakura);
+  padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: rgba(255, 126, 179, .12);
+}
+h1 {
+  margin: 12px 0 6px; font-size: 52px; letter-spacing: 3px; font-weight: 900; line-height: 1.05;
+  background: linear-gradient(96deg, #fff 0%, var(--blossom) 26%, var(--rose) 55%, var(--gold) 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 6px 26px rgba(255, 126, 179, .45));
+}
+.tagline { margin: 0 0 8px; font-size: 15px; color: #fff; letter-spacing: 1px; }
+.tagline b { color: var(--gold); font-weight: 700; }
+.lead { margin: 0; font-size: 12.5px; color: var(--dim); letter-spacing: .5px; }
+
+h2 {
+  margin: 0 0 12px; font-size: 27px; font-weight: 800; letter-spacing: 2px;
+  background: linear-gradient(94deg, #fff, var(--sakura) 45%, var(--gold));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.panel.slim h2 { text-align: center; }
+.sub { margin: 0 0 22px; color: var(--dim); font-size: 14px; line-height: 1.7; }
+
+/* 玩法速览：四张小卡（低栏 / 高杆 / 实墙 / 小恶魔）
+   横排比竖排省一半高度 —— 1080p 投影时不用滚动就能读完。 */
+.rules { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+.rule {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 7px;
+  padding: 11px 12px 12px; border-radius: var(--r-md);
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid var(--line-soft);
+  transition: transform .14s ease, border-color .14s ease, background .14s ease;
+}
+.rule:hover { transform: translateY(-2px); border-color: var(--line); background: rgba(255, 126, 179, .1); }
+.rule b { font-size: 13.5px; letter-spacing: .5px; }
+.rule span { color: var(--dim); font-size: 11px; line-height: 1.5; }
+.rules-note { margin: -8px 0 16px; font-size: 11px; color: var(--dim); text-align: center; }
+
+/* 用"高度形状"表达障碍类型，不依赖具体配色（配色随地图变化） */
+.sw {
+  width: 24px; height: 20px; display: inline-block; position: relative; flex: none;
+  border-left: 1px dashed rgba(255, 255, 255, .22);
+}
+.sw::after {
+  content: ''; position: absolute; left: 2px; right: 0;
+  background: linear-gradient(180deg, #fff, var(--blossom)); border-radius: 2px;
+  box-shadow: 0 0 8px rgba(255, 179, 210, .5);
+}
+.sw.low::after  { bottom: 0;  height: 7px; }
+.sw.high::after { top: 0;     height: 7px; }
+.sw.wall::after { top: 0; bottom: 0; }
+/* 小恶魔：发光圆身 + 头顶血条，形状上就和三类路障区分开 */
+.sw.mob::after {
+  top: 5px; bottom: 3px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffb27a, #ff7a3d);
+  box-shadow: 0 0 12px rgba(255, 138, 77, .8);
+}
+.sw.mob::before {
+  content: ''; position: absolute; left: 2px; right: 0; top: 0; height: 2px;
+  background: var(--gold); border-radius: 1px;
+}
+
+/* ---------- 选择器（地图 / 难度） ---------- */
+.map-label {
+  font-size: 11px; letter-spacing: 3px; color: var(--sakura);
+  margin: 0 0 9px; text-transform: uppercase;
+  display: flex; align-items: center; gap: 9px;
+}
+.map-label::after { content: ''; flex: 1; height: 1px; background: var(--line-soft); }
+
+.theme-picker { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; margin-bottom: 18px; }
+.theme-btn {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: var(--r-md); cursor: pointer;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .1);
+  color: var(--fg); font-size: 13px; text-align: left;
+  transition: border-color .15s, background .15s, transform .12s, box-shadow .15s;
+}
+.theme-btn:hover { background: rgba(255, 126, 179, .12); transform: translateY(-1px); }
+.theme-btn.active {
+  border-color: var(--rose);
+  background: linear-gradient(100deg, rgba(255, 126, 179, .22), rgba(155, 107, 255, .14));
+  box-shadow: 0 0 0 1px rgba(255, 126, 179, .4) inset, 0 8px 22px rgba(255, 126, 179, .18);
+}
+.theme-btn .swatches { display: flex; gap: 3px; flex: none; }
+.theme-btn .swatches i {
+  width: 9px; height: 20px; border-radius: 3px; display: block;
+  box-shadow: 0 0 8px rgba(255, 255, 255, .3);
+}
+.theme-btn .tname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.mode-picker { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; margin-bottom: 20px; }
+.mode-btn {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 11px 13px; border-radius: var(--r-md); cursor: pointer;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .1);
+  color: var(--fg); font-size: 13px; text-align: left;
+  transition: border-color .15s, background .15s, transform .12s, box-shadow .15s;
+}
+.mode-btn:hover { background: rgba(255, 126, 179, .12); transform: translateY(-1px); }
+.mode-btn b { font-size: 14px; letter-spacing: .6px; }
+.mode-btn span { font-size: 11px; opacity: .78; }
+.mode-btn em { font-size: 10.5px; opacity: .58; font-style: normal; line-height: 1.4; }
+.mode-btn.active {
+  border-color: var(--rose);
+  background: linear-gradient(100deg, rgba(255, 126, 179, .22), rgba(255, 217, 138, .12));
+  box-shadow: 0 0 0 1px rgba(255, 126, 179, .4) inset;
+}
+.mode-btn.active b { color: var(--blossom); }
+.mode-btn[data-mode="hard"].active {
+  border-color: #ff5ea8;
+  background: linear-gradient(100deg, rgba(255, 94, 168, .24), rgba(155, 107, 255, .14));
+  box-shadow: 0 0 0 1px rgba(255, 94, 168, .45) inset, 0 8px 22px rgba(255, 94, 168, .16);
+}
+.mode-btn[data-mode="hard"].active b { color: #ffa9d5; }
+
+/* ---------- 按钮 ---------- */
+.btns { display: flex; flex-direction: column; gap: 10px; }
+.btns.row2 { flex-direction: row; }
+.btns.row2 button { flex: 1; }
+button.primary, button.ghost {
+  position: relative; padding: 14px 20px; border-radius: 999px;
+  font-size: 15px; font-weight: 700; letter-spacing: 1px;
+  cursor: pointer; border: 1px solid transparent;
+  transition: transform .14s ease, box-shadow .14s ease, filter .14s ease;
+}
+button.primary {
+  background: linear-gradient(96deg, var(--rose-deep), var(--rose) 45%, var(--violet));
+  color: #2a0a20;
+  box-shadow: 0 12px 32px rgba(255, 126, 179, .32), inset 0 1px 0 rgba(255, 255, 255, .35);
+}
+button.primary::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(96deg, transparent, rgba(255, 255, 255, .35), transparent);
+  opacity: 0; transition: opacity .2s;
+}
+button.primary:hover { transform: translateY(-2px); box-shadow: 0 16px 40px rgba(255, 126, 179, .42); }
+button.primary:hover::after { opacity: 1; }
+button.primary:active { transform: translateY(0) scale(.99); }
+button.ghost { background: rgba(255, 255, 255, .05); border-color: var(--line); color: var(--fg); }
+button.ghost:hover { background: rgba(255, 126, 179, .14); transform: translateY(-1px); }
+
+.hint { margin: 14px 0 0; font-size: 11.5px; color: var(--dim); line-height: 1.7; text-align: center; }
+.hint kbd {
+  font-family: inherit; font-size: 11px; padding: 1px 5px; border-radius: 5px;
+  background: rgba(255, 255, 255, .08); border: 1px solid var(--line-soft); color: var(--blossom);
+}
+.tech-line {
+  margin: 12px 0 0; text-align: center; font-size: 10.5px; letter-spacing: 2px;
+  color: rgba(217, 174, 205, .6);
+}
+
+.bar {
+  height: 9px; background: rgba(255, 255, 255, .09); border-radius: 99px;
+  overflow: hidden; margin: 18px 0;
+}
+#calib-bar {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--sakura), var(--gold));
+  box-shadow: 0 0 14px rgba(255, 179, 210, .6);
+  transition: width .12s linear;
+}
+
+/* 摄像头诊断信息（识别不出人体时定位原因） */
+.cam-diag { display: none; text-align: left; margin-bottom: 14px; }
+.cam-diag.show { display: block; }
+.cam-diag .dg {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 12px; padding: 5px 0; border-bottom: 1px dashed rgba(255, 255, 255, .08);
+}
+.cam-diag .dg i { font-style: normal; color: var(--dim); }
+.cam-diag .dg b { font-weight: 600; color: var(--fg); font-family: ui-monospace, Menlo, Consolas, monospace; }
+.cam-diag .dg-advice { margin-top: 10px; font-size: 12.5px; line-height: 1.6; color: var(--gold); }
+.slim-btns { margin-top: 4px; }
+.slim-btns button { padding: 11px 16px; font-size: 13px; }
+
+/* ---------- 结算数据卡 ---------- */
+.stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px;
+}
+.stat {
+  text-align: center; padding: 13px 8px 12px; border-radius: var(--r-md);
+  background: rgba(255, 255, 255, .045); border: 1px solid var(--line-soft);
+}
+.stat b {
+  display: block; font-size: 24px; font-variant-numeric: tabular-nums; font-weight: 800;
+  background: linear-gradient(180deg, #fff, var(--sakura) 60%, var(--rose));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.stat span { font-size: 10.5px; color: var(--dim); letter-spacing: 1px; }
+
+/* ============================================================
+   Toast
+   ============================================================ */
+#toast {
+  position: absolute; left: 50%; bottom: 96px;
+  transform: translateX(-50%) translateY(12px);
+  padding: 11px 22px; border-radius: 999px; font-size: 14px;
+  background: rgba(34, 12, 42, .96); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============================================================
+   暂停遮罩
+   ============================================================ */
+#pause-layer {
+  position: absolute; inset: 0;
+  display: none; align-items: center; justify-content: center;
+  z-index: 30; pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(40, 10, 46, .62), rgba(10, 2, 16, .9) 76%);
+}
+#pause-layer.show { display: flex; animation: pauseIn .2s ease-out; }
+@keyframes pauseIn { from { opacity: 0; } to { opacity: 1; } }
+
+.pause-box {
+  text-align: center; padding: 30px 46px; border-radius: 24px;
+  background: rgba(34, 12, 42, .92); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  animation: pausePop .26s cubic-bezier(.2, .9, .3, 1.3);
+}
+@keyframes pausePop {
+  from { transform: scale(.9); opacity: 0; }
+  to   { transform: scale(1);  opacity: 1; }
+}
+.pause-icon {
+  font-size: 24px; letter-spacing: 8px; color: var(--sakura);
+  text-shadow: 0 0 22px rgba(255, 179, 210, .6);
+}
+.pause-box h2 {
+  margin: 10px 0 12px; font-size: 46px; letter-spacing: 10px; font-weight: 900;
+  background: linear-gradient(96deg, #fff, var(--sakura) 45%, var(--gold));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.pause-box p { margin: 0; color: var(--dim); font-size: 13px; letter-spacing: .5px; }
+
+/* ============================================================
+   触屏控制（移动端 / 平板演示）
+   ============================================================ */
+#touchpad { display: none; }
+@media (pointer: coarse) {
+  #touchpad { display: flex; gap: 14px; position: absolute; right: 22px; bottom: 26px; }
+  .tb {
+    width: 62px; height: 62px; border-radius: 50%; font-size: 22px;
+    background: rgba(255, 126, 179, .22); border: 1px solid var(--line); color: var(--fg);
+  }
+}
+
+/* ============================================================
+   自适应：矮屏 / 窄屏（答辩现场常见投影 1280×720）
+   ============================================================ */
+@media (max-height: 820px) {
+  .panel { padding: 22px 26px 20px; border-radius: 20px; }
+  h1 { font-size: 40px; }
+  .tagline { font-size: 13.5px; }
+  .brand { margin-bottom: 16px; }
+  .rules { gap: 8px; margin-bottom: 14px; }
+  .rule { padding: 9px 10px 10px; }
+  .theme-picker, .mode-picker { margin-bottom: 13px; gap: 8px; }
+  button.primary, button.ghost { padding: 12px 18px; font-size: 14px; }
+  .stats { gap: 8px; margin-bottom: 16px; }
+  .stat b { font-size: 20px; }
+}
+/* 极矮视口（内置预览面板 / 720p 投影 / 分屏演示）：整体再压一档，
+   目标是"不用滚动也能一屏读完" —— 配合上面的 margin:auto 兜底，再矮也不会看不见。 */
+@media (max-height: 700px) {
+  .screen { padding: 12px; }
+  .panel, .panel.start-split { padding: 16px 20px 14px; border-radius: 16px; }
+  .brand, .start-left .brand { margin-bottom: 10px; }
+  .brand-kicker { font-size: 10px; letter-spacing: 2px; padding: 3px 9px; }
+  h1.zh, .start-left h1.zh { font-size: 28px; letter-spacing: 1px; margin: 8px 0 6px; }
+  .tagline { font-size: 12.5px; margin: 0 0 4px; }
+  .lead { font-size: 11px; line-height: 1.5; }
+  .rules { gap: 6px; margin-bottom: 8px; }
+  .rule { padding: 7px 8px 8px; gap: 4px; }
+  .rule b { font-size: 12px; }
+  .rule span { font-size: 10px; line-height: 1.35; }
+  .sw { width: 20px; height: 14px; }
+  .rules-note { font-size: 10px; margin: 0 0 8px; }
+  .map-label { margin: 0 0 5px; font-size: 10px; letter-spacing: 2px; }
+  .theme-picker, .mode-picker { gap: 6px; margin-bottom: 8px; }
+  .theme-btn { padding: 7px 9px; font-size: 12px; }
+  .mode-btn { padding: 7px 9px; font-size: 12px; }
+  .mode-btn em { display: none; }        /* 难度卡副说明在矮屏让位 */
+  .btns { gap: 7px; }
+  .start-btns { padding-top: 10px; }
+  button.primary, button.ghost { padding: 9px 14px; font-size: 13px; }
+  .hint { font-size: 10.5px; line-height: 1.5; margin-top: 8px; }
+  .tech-line { font-size: 10px; }
+  .calib-wrap, .stats { gap: 6px; }
+}
+
+@media (max-width: 720px) {
+  .rules { grid-template-columns: repeat(2, 1fr); }
+  .stats { grid-template-columns: repeat(3, 1fr); }
+  .theme-picker, .mode-picker { grid-template-columns: 1fr; }
+  #hud { padding: 12px; gap: 10px; }
+  .metric b { font-size: 22px; }
+}

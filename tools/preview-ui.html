@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ui-loading</title>
+<!-- 引的是**线上那份** index.html 的结构与 css/style.css，
+     否���会变成"截图好看、实机难看" —— 展台只负责把状态摆出来，不改视觉。 -->
+<link rel="stylesheet" href="../css/style.css">
+<!-- ui.js 顶层 import three（scene.js 链上来的），没有这张表第一步就挂 -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "../vendor/three.module.js",
+    "@mediapipe/tasks-vision": "../vendor/vision_bundle.mjs"
+  }
+}
+</script>
+<style>
+  /* 展台专用：用渐变假装地图底色，验证 HUD 在"浅景(樱花)"和"暗景(地狱)"下都读得清。
+     真实 AMBIENT 由 Three.js 负责，这里只要给出一个足够恶劣的对比背景就够了。
+     注意层级：style.css 给 html/body 都上了不透明底色，body 的底色会盖住
+     z-index:-1 的固定元素 —— 所以这里 z-index 取 0，再让 #app 抬到 1。 */
+  #fake-scene { position: fixed; inset: 0; z-index: 0; }
+  #app { z-index: 1; }
+  #fake-scene.sakura {
+    background:
+      radial-gradient(circle at 22% 18%, #ffd9e8 0%, transparent 45%),
+      linear-gradient(180deg, #ffc4dd 0%, #f7a8c8 38%, #e7d3ea 70%, #cf9ec0 100%);
+  }
+  #fake-scene.hell {
+    background:
+      radial-gradient(circle at 50% 92%, #ff7a2e 0%, transparent 46%),
+      linear-gradient(180deg, #2b0a18 0%, #4a1010 40%, #7a2410 72%, #1a0408 100%);
+  }
+  /* 无头截图会把入场动画截在起点附近（半透明帧，实测整块面板几乎看不见）——
+     展台只要稳态，入场动画一律关掉；樱花瓣保留（要复核的就是它在飘的效果）。 */
+  .screen.show, .panel, .pause-box, #cam-panel.show, #toast { animation: none !important; }
+</style>
+</head>
+<body>
+<div id="fake-scene"></div>
+
+<script type="module">
+import { UI } from '../js/ui.js';
+
+// 说明：这个展台不渲染 3D，只是把 index.html 的真实 DOM 抓过来、填上有代表性的数值，
+// 用来出图复核"整站改版"后的观感。三条原则：
+//   ① DOM 来自线上 index.html（不复制粘贴，不会各走各的）；
+//   ② 数值由 js/ui.js 的同一套方法生成（heartMarkup / showOver / setCamDiag…）；
+//   ③ 状态由 URL 的 ?state= 指定：start / hud / pause / over / calib。
+const params = new URLSearchParams(location.search);
+const state = params.get('state') || 'start';
+const bg = params.get('bg') || 'sakura';
+
+const fake = document.getElementById('fake-scene');
+fake.className = bg;
+
+// ① 抓真实 DOM 注入（innerHTML 不会执行 <script>，所以 main.js 不会跑起来抢事）
+const html = await (await fetch('../index.html')).text();
+const doc = new DOMParser().parseFromString(html, 'text/html');
+const app = doc.getElementById('app');
+document.body.insertBefore(app, fake.nextSibling ? fake.nextSibling : null);
+// 移除老式写法带来的重复 id（如果 index.html 里还有别的入口）无所谓，这里只有 #app
+
+// ② 用真实的 UI 类摆状态
+const ui = new UI();
+ui.buildThemePicker(() => {});
+ui.setTheme(params.get('theme') || 'sakura');
+ui.buildModePicker(() => {});
+ui.setMode('normal');
+
+/** 一次有代表性的对战进度：连击、等级、以及"20/32 血 = 2 金 + 2 红" */
+const demo = {
+  score: 128450, distance: 1860, speed: 18.5,
+  combo: 7, level: 6, lives: 20, livesMax: 32,
+};
+const demoExtra = {
+  demonInRange: state !== 'pause',
+  demonApproaching: state === 'pause',
+  gestureLabel: '识别到出拳',
+  modeLabel: '体感', modeClass: 'ok',
+  diffLabel: '困难',
+};
+
+const summary = {
+  score: 128450, distance: 1860, cleared: 42, demons: 9,
+  bestCombo: 14, level: 7, modeLabel: '困难',
+};
+
+if (state === 'hud' || state === 'pause') {
+  ui.hideAllScreens();
+  ui.updateHUD(demo, demoExtra);
+  ui.el.fps.textContent = '60'; ui.el.fps.className = 'good';
+  ui.setAi(11);
+  document.getElementById('dep-info').textContent = '本地 vendor';
+  if (state === 'pause') ui.setPaused(true);
+} else if (state === 'over') {
+  ui.updateHUD(demo, demoExtra);
+  ui.showOver(summary);
+} else if (state === 'calib') {
+  ui.showScreen('calib');
+  ui.setCalibProgress(0.62, '保持站立 · 正在采集基准姿态 <b>62%</b>');
+  ui.setCamDiag([
+    ['画面亮度', '0.42'],
+    ['人体置信度', '0.86'],
+    ['可见关键点', '28 / 33'],
+    ['距画面占比', '0.54'],
+  ], '再往后退半步，让头顶到胯部完整入镜。');
+}
+// state === 'start' 时保留 index.html 自带的 .show（就是首屏默认态），什么都不用做
+
+document.title = 'ui-ready';
+</script>
+</body>
+</html>

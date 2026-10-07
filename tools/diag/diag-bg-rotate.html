@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>diag: 多背景轮换</title>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="box" style="width:640px;height:480px"></div>
+<script type="module">
+  const post = (ok, msg) => {
+    try {
+      fetch('/__probe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diag: 'bg-rotate', ok, msg: String(msg).slice(0, 2000) }) });
+    } catch (e) { /* ignore */ }
+  };
+  const errs = [];
+  window.addEventListener('error', e => errs.push('window:' + e.message));
+  window.addEventListener('unhandledrejection', e => errs.push('reject:' + (e.reason && e.reason.message)));
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  try {
+    const { World, THEMES, THEME_KEYS } = await import('./js/scene.js');
+    const world = new World(document.getElementById('box'));
+    world.init(THEME_KEYS[0]);
+
+    const log = [];
+    let allFaceHasMap = true;
+
+    // 每个主题：切过去 → 在它的图组里轮换满一圈 → 每张都推进若干帧让淡入跑完
+    for (const k of THEME_KEYS) {
+      try {
+        world.applyTheme(k);
+        const n = THEMES[k].bgImages.length;
+        const seen = [];
+        for (let i = 0; i < n; i++) {
+          const r = world.cycleBg(1);
+          // 推进 1.2s 的帧，足够走完淡入
+          for (let f = 0; f < 80; f++) world.update(0.016, { laneF: 1, jumpY: 0, duck: false, speed: 8 });
+          const bd = world.backdrop;
+          const faceHasMap = !!(bd && bd.face && bd.face.material && bd.face.material.map);
+          const prevHidden = !bd.prev.visible;
+          const op = bd && bd.face ? +bd.face.material.opacity.toFixed(2) : -1;
+          if (!faceHasMap) allFaceHasMap = false;
+          seen.push(`${r ? r.label : 'null'}${faceHasMap ? '' : '(无图!)'}${prevHidden ? '' : '(淡出层未收!)'}#${op}`);
+        }
+        // 回绕：再按一次应该回到第 0 张
+        const wrap = world.cycleBg(1);
+        log.push(`${k}[${n}]: ${seen.join(' | ')} → 回绕=${wrap.index}`);
+      } catch (e) {
+        log.push(`${k}: THROW(${(e && e.message) || e})`);
+      }
+    }
+
+    // 让异步纹理有时间落地（真实图片加载）
+    await sleep(1500);
+    const info = world.bgInfo;
+    const bd = world.backdrop;
+
+    post(errs.length === 0 && allFaceHasMap && bd && !bd.fading,
+      `errs=[${errs.join(';')}] 全图有贴图=${allFaceHasMap} 淡入已收尾=${bd ? !bd.fading : 'n/a'}`
+      + ` 当前=${world.themeName}/${info.index + 1}(${info.label})`
+      + `\n${log.join('\n')}`);
+  } catch (err) {
+    post(false, 'FATAL: ' + ((err && (err.stack || err.message)) || err));
+  }
+</script>
+</body>
+</html>

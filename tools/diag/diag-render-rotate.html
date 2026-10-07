@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>diag: 主题轮换 × 实际渲染</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "@mediapipe/tasks-vision": "./vendor/vision_bundle.mjs"
+  }
+}
+</script>
+</head>
+<body>
+<div id="box" style="width:640px;height:480px"></div>
+<script type="module">
+  const post = (ok, msg) => {
+    try {
+      fetch('/__probe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diag: 'render-rotate', ok, msg: String(msg).slice(0, 2500) }) });
+    } catch (e) { /* ignore */ }
+  };
+  const errs = [];
+  window.addEventListener('error', e => errs.push(String(e.message || (e.error && e.error.message))));
+
+  try {
+    const { World, THEMES, THEME_KEYS } = await import('./js/scene.js');
+    const { Game } = await import('./js/game.js');
+
+    const world = new World(document.getElementById('box'));
+    world.init(THEME_KEYS[0]);
+    const game = new Game(world, {});
+    game.start();
+
+    const log = [];
+    // 真渲染 + 真跑规则 + 高频切主题/切背景，模拟玩家在玩的时候狂按 M / B。
+    // 关键：一并穿插 setQuality —— main.js 的自适应降质器每 2.5s 就会调它一次，
+    // 它在主题切换后会重建景物/粒子/装饰，正是嫌疑最大的交叉点。
+    for (let round = 0; round < 3; round++) {
+      for (const k of THEME_KEYS) {
+        try {
+          game.clearObstacles();     // 与 main.js 的 setTheme 顺序一致
+          world.applyTheme(k);
+          for (let f = 0; f < 30; f++) {
+            game.update(1 / 60);     // 内部会 world.update + renderer.render
+            if (f % 3 === 0) world.cycleBg(1);
+            if (f === 10) { world.setQuality(0.5); world.renderer.setPixelRatio(1); }
+            if (f === 20) { world.setQuality(1); world.renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); }
+          }
+          log.push(k + ':ok');
+        } catch (e) {
+          log.push(k + ':THROW(' + (e && e.message) + ')');
+        }
+      }
+    }
+    const audit = [];
+    world.scene.traverse((o) => {
+      const m = o.material;
+      if (m && !Array.isArray(m) && m.map && o.parent) audit.push(o.type + '/' + m.type);
+    });
+
+    post(errs.length === 0 && log.every(s => s.endsWith(':ok')),
+      `轮换 ${log.length} 次 · 带贴图材质 ${audit.length} 个 · errs=[${errs.join(' | ')}]`
+      + `\n${log.join(' ')}`);
+  } catch (err) {
+    post(false, 'FATAL: ' + ((err && (err.stack || err.message)) || err));
+  }
+</script>
+</body>
+</html>

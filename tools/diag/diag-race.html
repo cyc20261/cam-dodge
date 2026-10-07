@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>diag: 识别回路 + 切主题 竞态</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "@mediapipe/tasks-vision": "./vendor/vision_bundle.mjs"
+  }
+}
+</script>
+<script>
+  // pose.js 走 CAMRUN_CONFIG 拿 wasmBase / modelUrl，这里必须补上，
+  // 否则 FilesetResolver 会去默认 CDN 找 wasm（离线环境直接失败）。
+  const abs = (p) => new URL(p, location.href).href;
+  window.CAMRUN_CONFIG = {
+    mode: 'local',
+    wasmBase: abs('./vendor/'),
+    modelUrl: abs('./vendor/pose_landmarker_lite.task'),
+    modelUrlFull: abs('./vendor/pose_landmarker_full.task'),
+  };
+</script>
+</head>
+<body>
+<div id="box" style="width:320px;height:240px"></div>
+<script type="module">
+  const post = (ok, msg) => {
+    try {
+      fetch('/__probe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diag: 'race', ok, msg: String(msg).slice(0, 2000) }) });
+    } catch (e) { /* ignore */ }
+  };
+  const errs = [];
+  // 关键：不带 capture 的 window error 能收到未捕获异常，含第三方库内部抛的
+  window.addEventListener('error', e => errs.push(e.message || String(e.error)));
+  window.addEventListener('unhandledrejection', e => errs.push('reject:' + (e.reason && e.reason.message)));
+
+  try {
+    const { World, THEME_KEYS } = await import('./js/scene.js');
+
+    // 用真实的 MediaPipe 模型跑识别，同时高频切主题 —— 复现"切图瞬间识别回路报错"
+    const trackerMod = await import('./js/pose.js');
+    const tracker = new trackerMod.PoseTracker(window.CAMRUN_CONFIG || {});
+
+    const video = document.createElement('video');
+    video.playsInline = true; video.muted = true; video.style.display = 'none';
+    document.body.appendChild(video);
+    // 假摄像头
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    await video.play();
+
+    tracker.video = video;
+    const delegate = await tracker.loadModel('lite');
+
+    const world = new World(document.getElementById('box'));
+    world.init(THEME_KEYS[0]);
+
+    let results = 0;
+    tracker.start(() => { results++; });
+
+    // 一边识别一边疯狂切主题 + 切背景
+    for (let round = 0; round < 3; round++) {
+      for (const k of THEME_KEYS) {
+        world.applyTheme(k);
+        world.cycleBg(1); world.cycleBg(1);
+        await new Promise(r => setTimeout(r, 260));
+      }
+    }
+    await new Promise(r => setTimeout(r, 800));
+    tracker.stop();
+
+    post(errs.length === 0,
+      `识别回调 ${results} 次 · 模型 ${delegate}/${tracker.quality} · 主题切换 12 次 `
+      + `· errs=[${errs.join(' | ')}]`);
+  } catch (err) {
+    post(false, 'FATAL: ' + ((err && (err.stack || err.message)) || err));
+  }
+</script>
+</body>
+</html>

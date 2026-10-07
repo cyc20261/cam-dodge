@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="box" style="width:640px;height:480px"></div>
+<script type="module">
+  const post = (ok, msg) => {
+    try {
+      fetch('/__probe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diag: 'scene-smoke', ok, msg: String(msg).slice(0, 500) }) });
+    } catch (e) { /* ignore */ }
+  };
+  window.addEventListener('error', e => post(false, 'window error: ' + e.message));
+  try {
+    const { World, THEMES, THEME_KEYS } = await import('./js/scene.js');
+    const world = new World(document.getElementById('box'));
+    world.init(THEME_KEYS[0]);
+    for (const k of THEME_KEYS) {
+      world.applyTheme(k);
+      world.update(0.016, { laneF: 1, jumpY: 0, duck: false, speed: 8 });
+    }
+    post(true, 'all themes ok: ' + THEME_KEYS.join(','));
+  } catch (err) {
+    post(false, (err && (err.stack || err.message)) || err);
+  }
+</script>
+</body>
+</html>

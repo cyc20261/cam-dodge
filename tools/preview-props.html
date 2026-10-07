@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>props preview</title>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.js" } }
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<script type="module">
+/**
+ * preview-props.html —— 障碍物 / 小恶魔 / 路边景物的静态展台（只给截图用，不参与游戏）
+ *
+ * 为什么需要它：模型好不好看只能靠眼睛。这个页面把三类障碍和血条摆成一排，
+ * 由 tools/preview-shots.mjs 用无头 Chrome 逐个主题截图，用来回看改动效果。
+ *
+ * 两种机位：
+ *   /tools/preview-props.html?theme=hell              道具展台（障碍 + 恶魔血条）
+ *   /tools/preview-props.html?theme=sakura&view=scenery  景物特写（看两侧建模质感）
+ *   /tools/preview-props.html?theme=hell&view=demon   恶魔特写（看小恶魔本体细节）
+ *
+ * 为什么景物特写要"重新摆一遍"：真跑里景物的位置是 Math.random() 撒的，
+ * 每次截图落点都不一样，没法做前后对比。这里按固定坐标摆三件再定死机位。
+ */
+import { World, THEMES } from '../js/scene.js';
+
+const q = new URLSearchParams(location.search);
+const theme = q.get('theme') || 'sakura';
+const view = q.get('view') || 'props';
+const world = new World(document.body).init(theme);
+
+const LANE = [-2.4, 0, 2.4];
+
+/** 画布按"截图目标尺寸"硬撑满。为什么不用 innerHeight：
+    无头 Chrome(new) 的布局视口比 --window-size 矮 ~90px（窗口尺寸里含了一段
+    浏览器 UI 占位），跟着 innerHeight 撑画布，截图下面就永远挂着一条黑边。
+    展台页只服务截图，直接写死目标尺寸最省事也最稳。 */
+const CAPTURE = { w: 1280, h: 720 };
+const fitCanvas = () => {
+  world.renderer.setPixelRatio(1);
+  world.renderer.setSize(CAPTURE.w, CAPTURE.h, true);
+  world.camera.aspect = CAPTURE.w / CAPTURE.h;
+  world.camera.updateProjectionMatrix();
+};
+
+if (view === 'demon') {
+  // ── 恶魔特写：近水平视角看"小恶魔本体 + 血条 + 地面指示环" ──
+  // 为什么要单独一张：主展台机位是俯视的，恶魔会被压成一个扁片，
+  // 分不清"设计就是这样"还是"网格坏了"。这张按游戏里的实际视角（几乎平视）拍。
+  const mkDemon = (lane, hp, maxHp) => {
+    const mesh = world.acquire('demon');
+    mesh.position.set(LANE[lane], 0, -6);
+    return { lane, z: -6, hp, maxHp, hitT: 0, hittable: true, mesh, scored: false };
+  };
+  const demons = [mkDemon(0, 3, 3), mkDemon(1, 1, 3)];
+  world.update(0.016, {
+    laneF: 1, lane: 1, jumpY: 0, duck: false, speed: 0, running: true, distance: 0,
+    demons, punchT: -1,
+  });
+  world.player.visible = false;
+  world.camera.position.set(-1.1, 1.35, -1.4);
+  world.camera.lookAt(0, 0.85, -6);
+  world.camera.updateMatrixWorld(true);
+  fitCanvas();
+  // 定格一发拳弹在飞：弹丸 150 m/s、全程 0.2 秒出头，真实游戏里根本截不到静态帧，
+  // 所以这里手动放一发（从玩家手位飞向中道那只怪），肉眼复核弹丸的观感与大小。
+  // 推进时长要按全程折算（dist/150×50%），推多了它就直接飞完消散了（踩过）。
+  world._spawnShot({ fromF: 1, x: LANE[1], z: -5.2, hit: true, lethal: false });
+  world._updateShots(4.9 / 150 * 0.5);   // 恰好飞到半路（约 2.5 米处）
+  // 血条是公告板：机位定死之后要按新相机重摆，否则侧着看不见
+  for (const d of demons) {
+    const hb = d.mesh.userData.hpBar;
+    if (hb) hb.group.quaternion.copy(world.camera.quaternion);
+  }
+  world.renderer.render(world.scene, world.camera);
+
+  window.__ready = true;
+  document.title = `demon-${theme}-ready`;
+} else if (view === 'scenery') {
+  // ── 景物特写：三件按固定坐标摆好（近景一件 + 纵深两件），专看建模细节 ──
+  const spots = [
+    [6.4, -11, 1.0],      // 近景（右侧）：看细节
+    [7.6, -22, 0.94],     // 远景：看和近景的层次
+    [-6.4, -16, 1.06],    // 对侧：顺带看另一侧的观感
+  ];
+  const pieces = spots.map(([x, z, s]) => {
+    const m = world._mkSceneryPiece(THEMES[theme]);
+    m.position.set(x, m.userData.baseY || 0, z);
+    m.scale.setScalar(s);
+    world.themeRoot.add(m);
+    return m;
+  });
+  world.scenery.push(...pieces);
+
+  // 只跑一帧（speed=0）让天幕/灯光/粒子就位，再把相机换成 3/4 特写机位
+  world.update(0.016, {
+    laneF: 1, lane: 1, jumpY: 0, duck: false, speed: 0, running: true, distance: 0,
+    demons: [], punchT: -1,
+  });
+  world.player.visible = false;
+  world.camera.position.set(0.6, 3.9, -3.4);
+  world.camera.lookAt(5.9, 1.7, -13.5);
+  world.camera.updateMatrixWorld(true);
+  fitCanvas();
+  world.renderer.render(world.scene, world.camera);
+
+  window.__ready = true;
+  document.title = `scenery-${theme}-ready`;
+} else {
+  const Z_OBST = Number(q.get('zo') ?? -5);
+  const Z_DEMON = Number(q.get('zd') ?? -9.5);
+
+  // 三类障碍各摆一个（正好对应"跳 / 蹲 / 变道"）
+  ['hurdle', 'overhead', 'block'].forEach((type, i) => {
+    const m = world.acquire(type);
+    m.position.set(LANE[i], 0, Z_OBST);
+  });
+
+  // 两只恶魔：一只满血、一只残血（验证血条长度与配色）
+  // hittable=true 是"此刻在挥拳窗口里"—— 地面指示环只在它为真时亮，
+  // 展台固定点亮，否则截图里的恶魔永远看不到这个环（坏掉了也看不出来）。
+  const demons = [
+    { lane: 0, z: Z_DEMON, hp: 3, maxHp: 3, hitT: 0, hittable: true },
+    { lane: 2, z: Z_DEMON, hp: 1, maxHp: 3, hitT: 0, hittable: true },
+  ].map((d) => {
+    const mesh = world.acquire('demon');
+    mesh.position.set(LANE[d.lane], 0, d.z);
+    return { ...d, mesh, scored: false };
+  });
+
+  // 跑一帧让血条/相机/影子都进入正确状态，然后改成"展台机位"再渲染
+  world.update(0.016, {
+    laneF: 1, lane: 1, jumpY: 0, duck: false, speed: 0, running: true, distance: 0,
+    demons, punchT: -1,
+  });
+  world.player.visible = false;        // 展台不需要玩家，避免挡住模型
+  world.camera.position.set(0, 2.0, 0.6);
+  world.camera.lookAt(0, 1.12, -6);
+  world.camera.updateMatrixWorld(true);
+  fitCanvas();
+  // 血条是公告板：机位改过之后要按新相机再摆一次，否则会侧着
+  for (const d of demons) {
+    const hb = d.mesh.userData.hpBar;
+    if (hb) hb.group.quaternion.copy(world.camera.quaternion);
+  }
+  world.renderer.render(world.scene, world.camera);
+
+  // 截完图/出错都能在页面里看到（无头截图是黑屏时用来判断原因）
+  window.__ready = true;
+  document.title = `props-${theme}-ready`;
+}
+</script>
+</body>
+</html>

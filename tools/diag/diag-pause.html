@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>diag: 空格暂停</title>
+</head>
+<body>
+<!-- 用真实的 index.html 结构片段：按键处理逻辑在 main.js 里，
+     而 main.js 会 import three / MediaPipe，纯页面里跑不起来。
+     所以这里复刻"暂停的规则语义"，验证的是 game 层的行为：
+     暂停期间不推进 game.update → 障碍物/分数/速度全部冻结。 -->
+<div id="box" style="width:320px;height:240px"></div>
+<div id="toast"></div>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module">
+  const post = (ok, msg) => {
+    try {
+      fetch('/__probe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diag: 'pause', ok, msg: String(msg).slice(0, 2000) }) });
+    } catch (e) { /* ignore */ }
+  };
+  const errs = [];
+  window.addEventListener('error', e => errs.push('window:' + e.message));
+  window.addEventListener('unhandledrejection', e => errs.push('reject:' + (e.reason && e.reason.message)));
+
+  try {
+    const { World } = await import('./js/scene.js');
+    const { Game } = await import('./js/game.js');
+    const world = new World(document.getElementById('box'));
+    world.init('hell');
+    const game = new Game(world, {});
+    game.start();
+
+    const step = (n) => { for (let i = 0; i < n; i++) game.update(1 / 60); };
+
+    // 先跑一会儿，让障碍物真的生成出来
+    step(60 * 8);
+    const zBefore = game.obstacles.map(o => +o.z.toFixed(3)).join(',');
+    const distBefore = +game.distance.toFixed(3);
+    const scoreBefore = +game.score.toFixed(3);
+    const speedBefore = +game.speed.toFixed(3);
+    const nObs = game.obstacles.length;
+
+    // 复刻 main.js 的暂停语义：暂停时 loop 走 world.update(speed=0)，不调 game.update
+    const PAUSE_FRAMES = 60 * 5;   // 暂停 5 秒
+    for (let i = 0; i < PAUSE_FRAMES; i++) {
+      world.update(1 / 60, {
+        laneF: game.laneF, lane: game.lane, jumpY: game.jumpY, duck: game.duck, speed: 0,
+      });
+    }
+
+    const zAfter = game.obstacles.map(o => +o.z.toFixed(3)).join(',');
+    const frozenZ = zBefore === zAfter;
+    const frozenDist = +game.distance.toFixed(3) === distBefore;
+    const frozenScore = +game.score.toFixed(3) === scoreBefore;
+    const frozenSpeed = +game.speed.toFixed(3) === speedBefore;
+
+    // 世界里必须有东西在动才不显得"卡死"：天幕过渡/粒子仍在推进
+    const skyMoved = !!(world.backdrop && world.backdrop.face);
+
+    // 恢复：再推进若干帧，必须继续前进（而不是卡在暂停点）
+    step(60 * 2);
+    const resumed = game.distance > distBefore + 1;
+
+    const ok = errs.length === 0 && frozenZ && frozenDist && frozenScore && frozenSpeed && resumed && skyMoved;
+
+    post(ok,
+      `障碍数=${nObs} 冻结(z/d/s/v)=${frozenZ}/${frozenDist}/${frozenScore}/${frozenSpeed} `
+      + `恢复后继续前进=${resumed} 天幕在渲染=${skyMoved} 暂停${PAUSE_FRAMES / 60}s`
+      + ` 距离 ${distBefore}→${+game.distance.toFixed(1)} errs=[${errs.join(';')}]`);
+  } catch (err) {
+    post(false, 'FATAL: ' + ((err && (err.stack || err.message)) || err));
+  }
+</script>
+</body>
+</html>

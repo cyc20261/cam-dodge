@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>奔跑吧，鲸鱼娘 · 摄像头体感跑酷</title>
+<link rel="stylesheet" href="./css/style.css">
+
+<!-- 离线版：依赖全部指向本地 vendor/ 目录，断网也能跑 -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/",
+    "@mediapipe/tasks-vision": "./vendor/vision_bundle.mjs"
+  }
+}
+</script>
+<script>
+  // 未捕获异常：既浮出到 toast（现场排障），也存进 __err 缓冲。
+  // 缓冲这一份是必要的：这段脚本在 <head> 里执行时 <body> 还没解析，
+  // getElementById('toast') 拿到的是 null —— 只挂 toast 的话，
+  // 模块加载阶段的异常会被静默吞掉，控制台没开就完全查不到。
+  // 自动化测试（tools/headless-check.mjs）也靠这个缓冲拿页面内错误。
+  window.__err = [];
+  window.addEventListener('error', (e) => {
+    const msg = String((e && (e.message || (e.error && e.error.message))) || e);
+    window.__err.push(msg);
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = '脚本错误: ' + msg; t.classList.add('show'); }
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason;
+    const msg = 'unhandled: ' + ((r && r.message) ? r.message : String(r));
+    window.__err.push(msg);
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = '异步错误: ' + msg; t.classList.add('show'); }
+  });
+  const abs = (p) => new URL(p, location.href).href;
+  window.CAMRUN_CONFIG = {
+    mode: 'local',
+    wasmBase: abs('./vendor/'),
+    modelUrl: abs('./vendor/pose_landmarker_lite.task'),
+    // 快速模型认不出人时会现场切换到高精度模型（同目录，离线可用）
+    modelUrlFull: abs('./vendor/pose_landmarker_full.task'),
+  };
+</script>
+</head>
+<body>
+
+<div id="app">
+  <!-- 3D 场景 -->
+  <div id="stage"></div>
+
+  <!-- 顶部 HUD -->
+  <div id="hud">
+    <div class="hud-left">
+      <div class="metric"><b id="score">0</b><span>SCORE</span></div>
+      <div class="metric dist"><b id="dist">0</b><span>米</span></div>
+      <div class="metric"><b id="speed">0</b><span>KM/H</span></div>
+      <div class="metric combo"><b id="combo">—</b><span>连击</span></div>
+      <div class="metric lvlm"><b id="level">1</b><span>等级</span></div>
+    </div>
+    <div class="hud-right">
+      <div id="lives" class="lives"></div>
+      <div class="row">
+        <span id="diff" class="pill">普通</span>
+        <span id="mode" class="pill">—</span>
+        <span class="pill ghost">FPS <i id="fps">0</i></span>
+        <span class="pill ghost">识别 <i id="ai-ms">—</i>ms</span>
+      </div>
+      <div id="punch-hint" class="punch-hint">挥拳！</div>
+      <div id="gesture" class="gesture">待机</div>
+    </div>
+  </div>
+
+  <!-- 摄像头面板 -->
+  <div id="cam-panel">
+    <div class="cam-head">
+      <span>实时姿态识别</span>
+      <button id="btn-debug" class="mini">调试</button>
+    </div>
+    <div class="cam-wrap">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div id="debug"></div>
+    <div class="cam-foot">依赖：<span id="dep-info">—</span> · 画面不出本机</div>
+  </div>
+
+  <!-- 触屏控制（移动端/平板演示） -->
+  <div id="touchpad">
+    <button id="tb-left" class="tb">◀</button>
+    <button id="tb-duck" class="tb">↓</button>
+    <button id="tb-jump" class="tb">▲</button>
+    <button id="tb-right" class="tb">▶</button>
+  </div>
+
+  <!-- 开始屏 -->
+  <div id="screen-start" class="screen show">
+    <div class="petals" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="panel start-split">
+      <!-- 左栏：品牌与入口 -->
+      <div class="start-left">
+        <div class="brand">
+          <div class="brand-kicker">CAM-DODGE · 摄像头体感跑酷</div>
+          <h1 class="zh">奔跑吧，<em>鲸鱼娘</em></h1>
+          <p class="tagline">抬手就跳 · 下蹲就钻 · 侧身就闪</p>
+          <p class="lead">纯浏览器端实时姿态识别<br>零安装零依赖 · 画面不出本机</p>
+        </div>
+        <div class="btns start-btns">
+          <button id="btn-pose" class="primary">摄像头体感模式</button>
+          <button id="btn-keyboard" class="ghost">键盘模式（无摄像头兜底）</button>
+        </div>
+        <p id="start-hint" class="hint">普通难度能轻松跑满 10 分钟；困难是高速高压局<br>
+          <kbd>←</kbd> <kbd>→</kbd> 变道 · <kbd>W</kbd>/<kbd>↑</kbd> 跳 · <kbd>↓</kbd> 蹲 · <kbd>F</kbd> 挥拳 · <kbd>空格</kbd> 暂停 · <kbd>M</kbd> 换地图 · <kbd>B</kbd> 换背景 · <kbd>P</kbd> 调试面板 · <kbd>ESC</kbd> 返回首页</p>
+        <p class="tech-line">MEDIAPIPE POSE · THREE.JS · 浏览器本地推理</p>
+      </div>
+
+      <!-- 分隔线 -->
+      <div class="start-divider" aria-hidden="true"></div>
+
+      <!-- 右栏：玩法与配置 -->
+      <div class="start-right">
+        <div class="rules">
+          <div class="rule"><i class="sw low"></i><b>低栏</b><span>起跳 / 抬手越过</span></div>
+          <div class="rule"><i class="sw high"></i><b>高杆</b><span>下蹲钻过</span></div>
+          <div class="rule"><i class="sw wall"></i><b>实墙</b><span>左右移动变道</span></div>
+          <div class="rule"><i class="sw mob"></i><b>小恶魔</b><span>挥拳打倒<br>血厚要连打几拳</span></div>
+        </div>
+        <p class="rules-note">障碍颜色随所选地图变化，形状与判定方式不变</p>
+
+        <div class="map-label">选择地图</div>
+        <div id="theme-picker" class="theme-picker"></div>
+
+        <div class="map-label">选择难度</div>
+        <div id="mode-picker" class="mode-picker"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 标定屏 -->
+  <div id="screen-calib" class="screen">
+    <div class="petals" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="panel slim">
+      <h2>姿态标定</h2>
+      <p id="calib-text" class="sub">请站直、正对摄像头</p>
+      <div class="bar"><div id="calib-bar"></div></div>
+      <div id="cam-diag" class="cam-diag"></div>
+      <div class="btns slim-btns">
+        <button id="btn-skip-calib" class="ghost">跳过标定，直接开跑</button>
+      </div>
+      <p class="hint">站位建议：距摄像头 1.5–2.5 米，全身入镜效果最佳；<br>空间受限时只露上半身也能玩（自动切换半身模式）。</p>
+    </div>
+  </div>
+
+  <!-- 结束屏 -->
+  <div id="screen-over" class="screen">
+    <div class="petals" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="panel">
+      <div class="brand" style="margin-bottom:16px">
+        <div class="brand-kicker">RUN COMPLETE</div>
+        <h2>这一趟到此为止</h2>
+      </div>
+      <div id="over-stats" class="stats"></div>
+      <div class="btns row2">
+        <button id="btn-restart" class="primary">再来一局</button>
+        <button id="btn-back" class="ghost">返回首页</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <!-- 暂停遮罩（空格触发）-->
+  <div id="pause-layer">
+    <div class="pause-box">
+      <div class="pause-icon">❙❙</div>
+      <h2>已暂停</h2>
+      <p>空格 继续 · B 换背景 · M 换地图 · ESC 返回首页</p>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

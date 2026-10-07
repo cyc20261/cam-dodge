@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="box" style="width:640px;height:480px"></div>
+<script type="module">
+  const post = (ok, msg) => {
+    try {
+      fetch('/__probe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diag: 'theme-rotate', ok, msg: String(msg).slice(0, 1500) }) });
+    } catch (e) { /* ignore */ }
+  };
+  const errs = [];
+  window.addEventListener('error', e => errs.push('window:' + e.message));
+  window.addEventListener('unhandledrejection', e => errs.push('reject:' + (e.reason && e.reason.message)));
+  try {
+    const { World, THEMES, THEME_KEYS } = await import('./js/scene.js');
+    const world = new World(document.getElementById('box'));
+    world.init(THEME_KEYS[0]);
+    const log = [];
+    // 模拟反复按 M 循环切主题，每轮 update 若干帧
+    for (let round = 0; round < 3; round++) {
+      for (const k of THEME_KEYS) {
+        try {
+          world.applyTheme(k);
+          for (let f = 0; f < 3; f++) {
+            world.update(0.016, { laneF: 1, jumpY: 0, duck: false, speed: 8 });
+          }
+          log.push(k + ':ok');
+        } catch (e) {
+          log.push(k + ':THROW(' + (e && e.message) + ')');
+        }
+      }
+    }
+    // 检查天幕球是否有 map
+    const skyHasMap = !!(world.sky && world.sky.material && world.sky.material.map);
+    const skyDomeOk = !!world.skyDome;
+    post(errs.length === 0 && skyHasMap,
+      `sky.map=${skyHasMap} dome=${skyDomeOk} swap=${log.length} errs=[${errs.join(';')}] sample=${log.slice(0,6).join(',')}`);
+  } catch (err) {
+    post(false, 'FATAL: ' + ((err && (err.stack || err.message)) || err));
+  }
+</script>
+</body>
+</html>
