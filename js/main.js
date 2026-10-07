@@ -137,11 +137,18 @@ function setPaused(v) {
   ui.setPaused(paused);
   if (paused) {
     game.setDuck(false);           // 别让玩家按着 ↓ 暂停后卡在蹲姿
-    ui.toast('已暂停 · 空格继续（B 可换背景）', 1800);
+    _touchIds.forEach((release) => release());   // 同理：暂停时松开所有按住的动作键
+    _touchIds.clear();
+    ui.toast(isCoarse() ? '已暂停 · 点「继续」恢复' : '已暂停 · 空格继续（B 可换背景）', 1800);
   } else {
     last = performance.now();      // 重置帧间隔基准，否则恢复瞬间会跳一大步
     ui.toast('继续！', 900);
   }
+}
+
+/** 触屏设备判定：用它决定提示文案（说"按空格"对手机用户是废话） */
+function isCoarse() {
+  try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; }
 }
 
 /** 恢复（或开始）游戏时统一清掉暂停态 */
@@ -324,15 +331,7 @@ window.addEventListener('keydown', (e) => {
   if (k === 'r' && phase === 'over') restart();
   if (k === 'escape' && phase !== 'idle') {
     // 中途退出：停掉体感回路，回到开始屏（可重新选择摄像头模式）
-    inputMode = 'keyboard';
-    tracker.stop();
-    latestLandmarks = null;
-    clearPause();
-    document.getElementById('cam-panel').classList.remove('show');
-    document.getElementById('cam-diag').classList.remove('show');
-    phase = 'idle';
-    game.reset();
-    ui.showScreen('start');
+    exitToHome();
   }
   if (k === 'p') ui.toggleDebug();
   if (k === 'm') {
@@ -347,21 +346,100 @@ window.addEventListener('keyup', (e) => {
   if (k === 's' || k === 'arrowdown') game.setDuck(false);
 });
 
-for (const [id, fn] of [
-  ['tb-left', () => game.moveLane(-1)],
-  ['tb-right', () => game.moveLane(1)],
-  ['tb-jump', () => game.jump()],
-]) {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('touchstart', (e) => { e.preventDefault(); fn(); }, { passive: false });
+/* ================= 键盘 / 触屏 ================= */
+
+/**
+ * 触屏绑定的三个坑（都踩过，别退回去）：
+ *
+ * ① 用 pointerdown 而不是 touchstart —— touchstart 在多指同时按时
+ *    某些浏览器不派发、且与 click 有 300ms 竞争；pointer 事件统一了鼠标/触摸/笔。
+ * ② 必须 setPointerCapture —— 手指按下后略微滑出按钮（跑动中太常见），
+ *    没有捕获就会漏掉 pointerup，游戏永远停在"蹲着"或"一直加速"的状态。
+ * ③ 每个按钮独立记录 pointerId，允许多指同时按住（边变道边挥拳是基本操作）。
+ */
+const _touchIds = new Map();   // pointerId → 释放函数
+
+function bindHold(el, onDown, onUp) {
+  if (!el) return;
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    el.classList.add('on');
+    _touchIds.set(e.pointerId, () => {
+      el.classList.remove('on');
+      if (onUp) onUp();
+    });
+    onDown();
+  });
+  const release = (e) => {
+    const fn = _touchIds.get(e.pointerId);
+    if (!fn) return;
+    _touchIds.delete(e.pointerId);
+    fn();
+  };
+  el.addEventListener('pointerup', release);
+  el.addEventListener('pointercancel', release);
+  // 上下文菜单（长按弹菜单）在游戏中毫无意义，只会打断操作
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
 }
-const tbDuck = document.getElementById('tb-duck');
-if (tbDuck) {
-  tbDuck.addEventListener('touchstart', (e) => { e.preventDefault(); game.setDuck(true); }, { passive: false });
-  tbDuck.addEventListener('touchend', (e) => { e.preventDefault(); game.setDuck(false); }, { passive: false });
+
+/** 单击型按钮：不关心抬起，按下即触发（变道 / 挥拳 / 界面按钮） */
+function bindTap(el, fn) {
+  if (!el) return;
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    el.classList.add('on');
+    setTimeout(() => el.classList.remove('on'), 110);
+    fn();
+  });
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// 左：方向（变道是两个独立按钮 —— 比滑动手势可靠得多，
+// 滑动在跑动中极易被判成滚动或误触成反方向）
+bindTap(document.getElementById('tb-left'), () => game.moveLane(-1));
+bindTap(document.getElementById('tb-right'), () => game.moveLane(1));
+
+// 右：动作。跳/拳是"一按一次"，蹲是"按住持续"
+bindTap(document.getElementById('tb-jump'), () => game.jump());
+bindTap(document.getElementById('tb-punch'), () => {
+  game.punch();
+  // 视觉反馈交给场景层的拳弹，这里只补一下按钮的按下态
+});
+bindHold(document.getElementById('tb-duck'), () => game.setDuck(true), () => game.setDuck(false));
+
+// 局内小控件
+bindTap(document.getElementById('tb-pause'), () => setPaused(!paused));
+bindTap(document.getElementById('tb-theme'), () => {
+  const i = THEME_KEYS.indexOf(world.themeName);
+  setTheme(THEME_KEYS[(i + 1) % THEME_KEYS.length]);
+});
+bindTap(document.getElementById('tb-bg'), () => cycleBg());
+bindTap(document.getElementById('tb-exit'), () => exitToHome());
+
+// 暂停面板上的触屏按钮（暂停遮罩在触屏设备上 pointer-events 才是 auto）
+bindTap(document.getElementById('btn-resume'), () => setPaused(false));
+bindTap(document.getElementById('btn-pause-theme'), () => {
+  const i = THEME_KEYS.indexOf(world.themeName);
+  setTheme(THEME_KEYS[(i + 1) % THEME_KEYS.length]);
+});
+bindTap(document.getElementById('btn-pause-exit'), () => exitToHome());
+
+/** 中途退出：停体感回路、回开始屏（键盘 ESC 与触屏 ✕ 共用） */
+function exitToHome() {
+  inputMode = 'keyboard';
+  tracker.stop();
+  latestLandmarks = null;
+  clearPause();
+  document.getElementById('cam-panel').classList.remove('show');
+  document.getElementById('cam-diag').classList.remove('show');
+  phase = 'idle';
+  game.reset();
+  ui.showScreen('start');
 }
 
 window.addEventListener('resize', () => world.resize());
+window.addEventListener('orientationchange', () => setTimeout(() => world.resize(), 220));
 
 /* ================= 流程 ================= */
 
@@ -500,7 +578,9 @@ function startKeyboardMode() {
   latestLandmarks = null;
   document.getElementById('cam-panel').classList.remove('show'); // 别让黑屏的摄像头小窗留在界面上
   ui.hideAllScreens();
-  ui.toast('键盘模式：←/→ 变道，W/↑ 跳，↓ 蹲，F 挥拳，空格 暂停，M 换地图，B 换背景', 3600);
+  ui.toast(isCoarse()
+    ? '触屏模式：左下方向键变道，右下「跳 / 蹲 / 拳」'
+    : '键盘模式：←/→ 变道，W/↑ 跳，↓ 蹲，F 挥拳，空格 暂停，M 换地图，B 换背景', 3600);
   restart();
 }
 
@@ -510,7 +590,9 @@ function beginRun() {
   game.reset();
   game.start();
   ui.hideAllScreens();
-  ui.toast(`开始！【${game.modeConf.label}】左右变道，跳/蹲过障碍，挥拳打小恶魔（空格可暂停）`, 3000);
+  ui.toast(isCoarse()
+    ? `开始！【${game.modeConf.label}】左下方向键变道，右下 跳 / 蹲 / 拳`
+    : `开始！【${game.modeConf.label}】左右变道，跳/蹲过障碍，挥拳打小恶魔（空格可暂停）`, 3000);
 }
 
 function restart() {

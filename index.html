@@ -88,12 +88,23 @@
     <div class="cam-foot">依赖：<span id="dep-info">—</span> · 画面不出本机</div>
   </div>
 
-  <!-- 触屏控制（移动端/平板演示） -->
-  <div id="touchpad">
-    <button id="tb-left" class="tb">◀</button>
-    <button id="tb-duck" class="tb">↓</button>
-    <button id="tb-jump" class="tb">▲</button>
-    <button id="tb-right" class="tb">▶</button>
+  <!-- 触屏控制（移动端/平板演示）：左侧方向盘 + 右侧动作键，两手拇指各自够得着 -->
+  <div id="touchpad" class="tp-left">
+    <button id="tb-left" class="tb" aria-label="左移">◀</button>
+    <button id="tb-right" class="tb" aria-label="右移">▶</button>
+  </div>
+  <div id="touchpad-act" class="tp-right">
+    <button id="tb-duck" class="tb" aria-label="下蹲">蹲</button>
+    <button id="tb-jump" class="tb" aria-label="跳跃">跳</button>
+    <button id="tb-punch" class="tb punch" aria-label="挥拳">拳</button>
+  </div>
+
+  <!-- 局内小控件（暂停时也要能按到：暂停遮罩 z-index 高于 HUD 但低于这里） -->
+  <div id="mobile-hud">
+    <button id="tb-pause" class="mini-btn" aria-label="暂停">❙❙</button>
+    <button id="tb-theme" class="mini-btn" aria-label="换地图">图</button>
+    <button id="tb-bg" class="mini-btn" aria-label="换背景">景</button>
+    <button id="tb-exit" class="mini-btn" aria-label="返回首页">✕</button>
   </div>
 
   <!-- 开始屏 -->
@@ -114,6 +125,8 @@
         </div>
         <p id="start-hint" class="hint">普通难度能轻松跑满 10 分钟；困难是高速高压局<br>
           <kbd>←</kbd> <kbd>→</kbd> 变道 · <kbd>W</kbd>/<kbd>↑</kbd> 跳 · <kbd>↓</kbd> 蹲 · <kbd>F</kbd> 挥拳 · <kbd>空格</kbd> 暂停 · <kbd>M</kbd> 换地图 · <kbd>B</kbd> 换背景 · <kbd>P</kbd> 调试面板 · <kbd>ESC</kbd> 返回首页</p>
+        <p id="start-hint-touch" class="hint">左下 <b>◀ ▶</b> 变道 · 右下 <b>跳 / 蹲 / 拳</b> 动作<br>
+          右上 <b>❙❙</b> 暂停、<b>图</b> 换地图、<b>景</b> 换背景、<b>✕</b> 返回首页</p>
         <p class="tech-line">MEDIAPIPE POSE · THREE.JS · 浏览器本地推理</p>
       </div>
 
@@ -172,12 +185,20 @@
 
   <div id="toast"></div>
 
+  <!-- 竖屏提示（仅触屏竖屏可见） -->
+  <div id="rotate-tip">↻ 横屏握持，视野更宽、拇指更好按</div>
+
   <!-- 暂停遮罩（空格触发）-->
   <div id="pause-layer">
     <div class="pause-box">
       <div class="pause-icon">❙❙</div>
       <h2>已暂停</h2>
-      <p>空格 继续 · B 换背景 · M 换地图 · ESC 返回首页</p>
+      <p class="pause-keys">空格 继续 · B 换背景 · M 换地图 · ESC 返回首页</p>
+      <div class="btns row2 pause-btns">
+        <button id="btn-resume" class="primary">继续</button>
+        <button id="btn-pause-theme" class="ghost">换地图</button>
+        <button id="btn-pause-exit" class="ghost">返回首页</button>
+      </div>
     </div>
   </div>
 </div>

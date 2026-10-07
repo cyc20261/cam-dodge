@@ -87,13 +87,13 @@ const summary = {
   bestCombo: 14, level: 7, modeLabel: '困难',
 };
 
-if (state === 'hud' || state === 'pause') {
+if (state === 'hud' || state === 'pause' || state === 'hudmobile' || state === 'pausemobile') {
   ui.hideAllScreens();
   ui.updateHUD(demo, demoExtra);
   ui.el.fps.textContent = '60'; ui.el.fps.className = 'good';
   ui.setAi(11);
   document.getElementById('dep-info').textContent = '本地 vendor';
-  if (state === 'pause') ui.setPaused(true);
+  if (state === 'pause' || state === 'pausemobile') ui.setPaused(true);
 } else if (state === 'over') {
   ui.updateHUD(demo, demoExtra);
   ui.showOver(summary);

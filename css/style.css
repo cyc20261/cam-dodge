@@ -50,6 +50,22 @@ html, body {
   font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
   -webkit-user-select: none; user-select: none;
   -webkit-font-smoothing: antialiased;
+  /* 移动端：整体禁掉双击缩放与橡皮筋回弹，否则按方向键会连带把页面拖走 */
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+/* 触屏设备再收紧一档：只有开始/结束这类"内容屏"允许滚动，
+   游玩界面彻底不响应滚动 —— 方向键连按再快也不会滑走画面 */
+@media (pointer: coarse) {
+  html, body { touch-action: none; }
+  .screen { touch-action: pan-y; }
+}
+
+/* 操作提示二选一：桌面端报键位，触屏端报按钮位置 */
+#start-hint-touch { display: none; }
+@media (pointer: coarse) {
+  #start-hint { display: none; }
+  #start-hint-touch { display: block; }
 }
 
 #app { position: fixed; inset: 0; }
@@ -546,6 +562,8 @@ button.ghost:hover { background: rgba(255, 126, 179, .14); transform: translateY
     radial-gradient(circle at 50% 45%, rgba(40, 10, 46, .62), rgba(10, 2, 16, .9) 76%);
 }
 #pause-layer.show { display: flex; animation: pauseIn .2s ease-out; }
+/* 触屏设备上暂停遮罩必须能点（键盘用户按空格就行，点不点无所谓） */
+@media (pointer: coarse) { #pause-layer.show { pointer-events: auto; } }
 @keyframes pauseIn { from { opacity: 0; } to { opacity: 1; } }
 
 .pause-box {
@@ -568,16 +586,81 @@ button.ghost:hover { background: rgba(255, 126, 179, .14); transform: translateY
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .pause-box p { margin: 0; color: var(--dim); font-size: 13px; letter-spacing: .5px; }
+/* 桌面端显示键盘提示，触屏端换成真正的按钮 —— 手机上"空格继续"是句废话 */
+.pause-btns { display: none; margin-top: 20px; }
+@media (pointer: coarse) {
+  .pause-keys { display: none; }
+  .pause-btns { display: flex; }
+  .pause-box { padding: 26px 30px; max-width: 86vw; }
+  .pause-box h2 { font-size: 34px; letter-spacing: 6px; }
+}
 
 /* ============================================================
    触屏控制（移动端 / 平板演示）
+   布局原则：左手拇指管方向（左下角），右手拇指管动作（右下角），
+   中间留空 —— 手机横屏握持时两个拇指自然落点就在这里。
+   命中区 66px（远大于 44px 的可用性下限），戴着手也能按准。
    ============================================================ */
-#touchpad { display: none; }
+#touchpad, #touchpad-act, #mobile-hud { display: none; }
 @media (pointer: coarse) {
-  #touchpad { display: flex; gap: 14px; position: absolute; right: 22px; bottom: 26px; }
+  #touchpad, #touchpad-act {
+    display: flex; position: absolute; bottom: max(20px, env(safe-area-inset-bottom));
+    gap: 12px; z-index: 40;
+  }
+  #touchpad { left: max(18px, env(safe-area-inset-left)); }
+  #touchpad-act { right: max(18px, env(safe-area-inset-right)); align-items: flex-end; }
   .tb {
-    width: 62px; height: 62px; border-radius: 50%; font-size: 22px;
-    background: rgba(255, 126, 179, .22); border: 1px solid var(--line); color: var(--fg);
+    width: 66px; height: 66px; border-radius: 50%;
+    font-size: 20px; font-weight: 700; font-family: inherit;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 126, 179, .24); border: 1px solid var(--line); color: var(--fg);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;            /* 关键：挡住双击缩放 / 长按选择 / 页面滚动 */
+    user-select: none; -webkit-user-select: none;
+    transition: transform .08s ease-out, background .08s ease-out;
+  }
+  .tb.on, .tb:active {
+    transform: scale(.9);
+    background: rgba(255, 126, 179, .55);
+    box-shadow: 0 0 18px rgba(255, 126, 179, .5);
+  }
+  /* 挥拳在主拇指位，给它的存在感最强 */
+  .tb.punch { width: 78px; height: 78px; font-size: 22px; background: rgba(255, 106, 168, .34); }
+  .tb.punch.on, .tb.punch:active { background: rgba(255, 106, 168, .7); }
+
+  /* 局内小控件：暂停 / 换图 / 换景 / 退出。放在右上，避开两个拇指区 */
+  #mobile-hud {
+    display: flex; gap: 8px; position: absolute;
+    top: max(10px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    z-index: 45;
+  }
+  .mini-btn {
+    width: 40px; height: 40px; border-radius: 12px; font-size: 15px; font-family: inherit;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(34, 12, 42, .62); border: 1px solid var(--line);
+    color: var(--fg); -webkit-tap-highlight-color: transparent;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .mini-btn.on, .mini-btn:active { background: rgba(255, 126, 179, .5); }
+}
+
+/* 竖屏提醒：体感游戏在竖屏下几乎没有可视范围，给一条温和的提示而不是硬拦 */
+#rotate-tip { display: none; }
+@media (pointer: coarse) and (orientation: portrait) {
+  #rotate-tip {
+    display: block; position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%); z-index: 60;
+    padding: 14px 22px; border-radius: 14px;
+    background: rgba(20, 6, 26, .88); border: 1px solid var(--line);
+    color: var(--fg); font-size: 14px; letter-spacing: .5px; text-align: center;
+    pointer-events: none;
+    animation: rotateTipAttenuate 3.2s ease-out forwards;
+  }
+  /* 提示自己淡出，别一直挡着画面 —— 玩家想竖着玩就让他玩 */
+  @keyframes rotateTipAttenuate {
+    0%, 62% { opacity: 1; }
+    100% { opacity: 0; }
   }
 }
 
